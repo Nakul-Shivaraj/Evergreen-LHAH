@@ -58,6 +58,71 @@ function Chart({ series, height = 140, label }) {
   );
 }
 
+const CELL = {
+  passed: { t: "P", bg: "var(--green)", label: "passed" },
+  failed: { t: "F", bg: "var(--red)", label: "failed" },
+  error: { t: "E", bg: "var(--amber)", label: "error" },
+};
+
+function TestGrid({ grid }) {
+  if (!grid?.tests?.length) return <div className="empty">No per-test results yet</div>;
+  const n = grid.suites.length;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="tgrid">
+        <thead>
+          <tr>
+            <th>Test</th>
+            {grid.suites.map((s) => (
+              <th key={s.suite} title={`suite ${s.suite}${s.file ? ` after ${s.file}` : ""}${s.kept ? " (kept)" : ""}`}>{s.suite}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {grid.tests.map((t) => (
+            <tr key={t.id}>
+              <td className="tname" title={t.signature || t.id}>
+                <code>{t.id.split("::").pop()}</code>
+                {t.signature && <div className="bad" style={{ fontSize: 11 }}>{t.signature}</div>}
+              </td>
+              {t.statuses.map((s, i) => {
+                const c = CELL[s] || { t: s ? "?" : "", bg: "var(--line)", label: s || "not run" };
+                return <td key={i} className="cell" style={{ background: c.bg }} title={`suite ${grid.suites[i].suite}: ${c.label}`}>{c.t}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+        P passed · F failed · E error · columns are full test-suite runs in order ({n})
+      </div>
+    </div>
+  );
+}
+
+function Patches({ patches }) {
+  if (!patches?.length) return <div className="empty">No kept patches yet</div>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {patches.slice().reverse().map((p, i) => (
+        <details key={i} className="patch">
+          <summary>
+            <code>{p.file}</code> <span className="good">kept</span>
+            <span style={{ color: "var(--muted)" }}>
+              {" "}· <code>{p.sha}</code>{p.mode ? ` · ${p.mode}` : ""}{p.rules.length ? ` · ${p.rules.join(", ")}` : ""}
+            </span>
+          </summary>
+          <pre className="diff">
+            {p.diff.split("\n").map((l, j) => (
+              <span key={j} className={l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : l.startsWith("@@") ? "hunk" : ""}>{l + "\n"}</span>
+            ))}
+          </pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 const Tile = ({ k, v, cls }) => (
   <div className="card tile"><div className={`v ${cls || ""}`}>{v}</div><div className="k">{k}</div></div>
 );
@@ -136,6 +201,17 @@ export default function Page() {
                 { name: "Evergreen", color: "var(--green)", points: data.prompt.map((p) => p.prompt) },
                 { name: "naive agent", color: "var(--red)", points: data.prompt.map((p) => p.naive) },
               ]} />
+            </div>
+          </div>
+
+          <div className="grid two" style={{ marginBottom: 12 }}>
+            <div className="card">
+              <h2>Every test, every suite run</h2>
+              <TestGrid grid={data.grid} />
+            </div>
+            <div className="card">
+              <h2>Kept patches ({data.patches?.length || 0} commits)</h2>
+              <Patches patches={data.patches} />
             </div>
           </div>
 

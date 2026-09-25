@@ -31,6 +31,17 @@ select { background:var(--panel); color:var(--ink); border:1px solid var(--line)
 .bar { height:8px; border-radius:4px; background:var(--line); overflow:hidden; }
 .bar > span { display:block; height:100%; background:var(--green); }
 .empty { color:var(--muted); padding:40px 0; text-align:center; }
+.tgrid { width:auto; border-collapse:separate; border-spacing:2px; }
+.tgrid th, .tgrid td { border-bottom:none; padding:2px 4px; }
+.tgrid th { text-align:center; font-size:11px; }
+.tgrid .tname { max-width:260px; padding-right:8px; }
+.tgrid .cell { width:22px; min-width:22px; height:20px; text-align:center; font-size:11px; font-weight:600;
+  color:#0e1411; border-radius:3px; }
+.patch { border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+.patch summary { cursor:pointer; font-size:13px; }
+.diff { margin:8px 0 2px; padding:8px; background:var(--bg); border-radius:6px; overflow-x:auto;
+  font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre; }
+.diff .add { color:var(--green); } .diff .del { color:var(--red); } .diff .hunk { color:var(--muted); }
 `;
 
 export default function RootLayout({ children }) {

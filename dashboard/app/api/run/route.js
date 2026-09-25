@@ -14,11 +14,13 @@ export async function GET(request) {
   const runId = asked || runs[0]?.run_id;
   if (!runId) return Response.json({ runs: [], runId: null });
 
-  const [tests, attempts, ruleEvents, evidence] = await Promise.all([
+  const [tests, attempts, ruleEvents, evidence, patchRows, testResults] = await Promise.all([
     rows("test_runs", runId),
     rows("attempts", runId),
     rows("rule_events", runId),
     rows("evidence", runId),
+    rows("patches", runId),
+    rows("test_results", runId, 5000),
   ]);
   const bySeq = (a, b) => num(a.at) - num(b.at) || num(a.seq) - num(b.seq);
   tests.sort(bySeq); ruleEvents.sort(bySeq); evidence.sort(bySeq);
@@ -41,6 +43,36 @@ export async function GET(request) {
     r.applied = Math.max(r.appliedField, 1 + r.reused + r.failed);   // birth + every reuse
     r.inAgentsMd = r.status === "verified" || r.status === "trusted";
   }
+
+  // Kept commits, oldest first. Diffs are capped so one huge patch can't bloat every poll.
+  patchRows.sort((a, b) => num(a.attempt) - num(b.attempt) || bySeq(a, b));
+  const patches = patchRows.map((p) => ({
+    file: p.file,
+    sha: String(p.commit_sha || "").slice(0, 7),
+    mode: p.mode,
+    rules: Array.isArray(p.rule_ids) ? p.rule_ids : p.rule_ids ? [p.rule_ids] : [],
+    attempt: num(p.attempt),
+    diff: String(p.diff || "").slice(0, 6000),
+  }));
+
+  // Test grid: one row per test, one column per suite run; the latest status wins per cell.
+  testResults.sort(bySeq);
+  const suites = [...new Set(testResults.map((t) => num(t.suite)))].sort((a, b) => a - b);
+  const cells = {}, sigs = {}, suiteInfo = {};
+  for (const t of testResults) {
+    (cells[t.test_id] ||= {})[num(t.suite)] = t.status;
+    if (t.signature) sigs[t.test_id] = t.signature;
+    suiteInfo[num(t.suite)] = { file: t.file, kept: truthy(t.kept), attempt: num(t.attempt) };
+  }
+  const lastSuite = suites[suites.length - 1];
+  const grid = {
+    suites: suites.map((s) => ({ suite: s, ...suiteInfo[s] })),
+    tests: Object.keys(cells).sort().map((id) => ({
+      id,
+      statuses: suites.map((s) => cells[id][s] || null),
+      signature: cells[id][lastSuite] !== "passed" ? sigs[id] || null : null,
+    })),
+  };
 
   const last = tests[tests.length - 1] || {};
   const accepted = attempts.filter((a) => truthy(a.accepted));
@@ -70,6 +102,8 @@ export async function GET(request) {
       naive: num(a.naive_prompt_tokens),
     })),
     rules: Object.values(rules),
+    patches,
+    grid,
     feed: attempts.slice(-12).reverse().map((a) => ({
       file: a.file,
       accepted: truthy(a.accepted),
