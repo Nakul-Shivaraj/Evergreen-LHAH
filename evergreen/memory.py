@@ -1,24 +1,37 @@
 """P3 (Nakul): the agent's memory.
 
 Every event is written to runs/events.jsonl immediately (never lost).
-If RAWTREE=1 and the rtree CLI is installed, events are also batch-inserted
-into RawTree every 2 seconds in the background, so logging never slows the demo.
+If RAWTREE=1 and RAWTREE_API_KEY is set, events are also batch-inserted into RawTree
+over HTTP every 2 seconds in the background, so logging never slows the demo.
 """
 import dataclasses
 import json
 import os
 import pathlib
 import queue
-import shutil
-import subprocess
 import threading
 import time
+
+import requests
 
 RUN_DIR = pathlib.Path(os.environ.get("EVERGREEN_RUN_DIR", "runs"))
 RUN_DIR.mkdir(exist_ok=True)
 LOCAL_LOG = RUN_DIR / "events.jsonl"
 RULES_FILE = RUN_DIR / "rules.json"
-USE_RAWTREE = os.environ.get("RAWTREE") == "1" and shutil.which("rtree") is not None
+API = "https://api.rawtree.com/v1"
+
+
+def _db():
+    return os.environ.get("RAWTREE_DATABASE", "evergreen")
+
+
+def _headers():
+    return {"Authorization": f"Bearer {os.environ.get('RAWTREE_API_KEY', '')}"}
+
+
+def rawtree_on():
+    # Read at call time, so env loaded by the entry point after import still counts.
+    return os.environ.get("RAWTREE") == "1" and bool(os.environ.get("RAWTREE_API_KEY"))
 
 _q = queue.Queue()
 _lock = threading.Lock()
@@ -28,21 +41,31 @@ def log(table, row):
     row = {**row, "at": row.get("at", int(time.time()))}   # epoch seconds, per the brief
     with LOCAL_LOG.open("a") as f:
         f.write(json.dumps({"_table": table, **row}) + "\n")
-    if USE_RAWTREE:
+    if rawtree_on():
+        _start_flusher()
         _q.put((table, row))
 
 
 def flush():
-    """Send everything queued to RawTree. Call once at the end of a run too."""
+    """Send everything queued to RawTree. Call once at the end of a run too.
+    Failed batches are re-queued, so a network blip never loses an event."""
     with _lock:
         batch = {}
         while not _q.empty():
             t, r = _q.get()
             batch.setdefault(t, []).append(r)
         for t, rows in batch.items():
-            # verify flags against RawTree's CLI docs
-            subprocess.run(["rtree", "insert", "--table", t, "--data", json.dumps(rows), "--json"],
-                           capture_output=True)
+            try:
+                resp = requests.post(f"{API}/tables/{t}", params={"database": _db()},
+                                     json=rows, headers=_headers(), timeout=10)
+                resp.raise_for_status()
+            except requests.RequestException as e:
+                print(f"[memory] RawTree insert into {t} failed ({e}); will retry")
+                for r in rows:
+                    _q.put((t, r))
+
+
+_flusher_started = False
 
 
 def _flusher():
@@ -51,16 +74,24 @@ def _flusher():
         flush()
 
 
-if USE_RAWTREE:
-    threading.Thread(target=_flusher, daemon=True).start()
+def _start_flusher():
+    global _flusher_started
+    if not _flusher_started:
+        _flusher_started = True
+        threading.Thread(target=_flusher, daemon=True).start()
 
 
 def query(sql):
-    """Read-only SQL against RawTree. Returns [] if RawTree is off."""
-    if not USE_RAWTREE:
+    """Read-only SQL against RawTree. Returns [] if RawTree is off or the query fails
+    (e.g. a table that doesn't exist until its first insert)."""
+    if not rawtree_on():
         return []
-    out = subprocess.run(["rtree", "query", "--json", sql], capture_output=True, text=True)
-    return json.loads(out.stdout or "[]")
+    try:
+        resp = requests.post(f"{API}/query", params={"database": _db()}, json={"sql": sql},
+                             headers=_headers(), timeout=20)
+        return resp.json().get("data", []) if resp.ok else []
+    except (requests.RequestException, ValueError):
+        return []
 
 
 def local_rows(table):

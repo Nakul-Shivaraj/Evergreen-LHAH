@@ -3,5 +3,4 @@
 __pycache__/
 report.xml
 *.jsonl
-.evidence_cache.json
 .changelog_cache/

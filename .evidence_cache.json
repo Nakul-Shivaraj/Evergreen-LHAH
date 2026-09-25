@@ -1,0 +1,30 @@
+{
+ "AttributeError: DataFrame.append": {
+  "url": "https://pandas.pydata.org/pandas-docs/version/1.5.3/reference/api/pandas.DataFrame.append.html",
+  "snippet": "v/pandas/blob/v1.5.3/pandas/core/frame.py#L9658-L9768)# : Append rows of other to the end of caller, returning a new object. Deprecated since version 1.4.0: Use `concat()` instead. For further details see Deprecated DataFrame.append and Series.append Columns in other that are not in the caller are added as new columns. Parameters : **other**DataFrame or Series/dict-like object, or list of these : The data to append. **ignore_index**bool, default False : If True, the resulting axis will be labele"
+ },
+ "AttributeError: DataFrame.iteritems": {
+  "url": "https://pandas.pydata.org/pandas-docs/version/1.5/reference/api/pandas.DataFrame.iteritems.html",
+  "snippet": "ps://github.com/pandas-dev/pandas/blob/v1.5.3/pandas/core/frame.py#L1356-L1364)# : Iterate over (column name, Series) pairs. Deprecated since version 1.5.0: iteritems is deprecated and will be removed in a future version. Use .items instead. Iterates over the DataFrame columns, returning a tuple with the column name and the content as a Series. Yields : **label**object : The column names for the DataFrame being iterated over. **content**Series : The column entries belonging to each label, as a S"
+ },
+ "TypeError: export.line_terminator": {
+  "url": "https://stackoverflow.com/questions/43684096/pandas-to-csv-got-an-unexpected-keyword-argument",
+  "snippet": "While I am trying to use some of the parameters in dataframe to_csv function, it throws an TypeError, such as `TypeError: to_csv () got an unexpected keyword argument 'doublequote' df.to_csv ('transactions.x', header=False, doublequote=False) or df.to_csv ('transactions.x', doublequote=False) My pandas version is 0.19.2 (Checked with print (pd.__version__)) I am using Python 3.5 The following ..."
+ },
+ "AttributeError: module 'pandas' has no attribute 'Int64I": {
+  "url": "https://stackoverflow.com/questions/76155297/attributeerror-module-pandas-has-no-attribute-int64index",
+  "snippet": "2.0.1 is a minor release after the major update to pandas 2.0 which removed old deprecated code such as Int64Index. From the 2.0 change log, Index can now hold numpy numeric dtypes Int64Index, UInt64Index & Float64Index were deprecated in pandas version 1.4 and have now been removed."
+ },
+ "AttributeError: Index.is_monotonic": {
+  "url": "https://pandas.pydata.org/docs/reference/indexing.html",
+  "snippet": "data in the Index. | | `Index.is_monotonic_increasing` | Return a boolean if the values are equal or increasing. | | `Index.is_monotonic_decreasing` | Return a boolean if the values are equal or decreasing. | | `Index.is_unique` | Return if the index has unique values. | | `Index.has_duplicates` | Check if the Index has duplicate values. | | `Index.hasnans` | Return True if there are any NaNs. | | `Index.dtype` | Return the dtype object of the underlying data. | | `Index.inferred_type` | Return"
+ },
+ "TypeError: agg function failed [how->mean,dtype->ob": {
+  "url": "https://stackoverflow.com/questions/77248452/groupby-function",
+  "snippet": "But it is showing me error: TypeError: agg function failed [how->mean,dtype->object] This same syntax is run in video lecture I am taking, but my notebook is showing type error."
+ },
+ "TypeError: Could not convert ['2026-01-012026-01-02": {
+  "url": "https://stackoverflow.com/questions/44522741/pandas-typeerror-could-not-convert-to-numeric",
+  "snippet": "An implication is that string columns are not dropped when a statistical method such as mean or std is called on the groupby object (as was done in the past). To solve the issue, pass numeric_only=True. An example that shows the problem and the solution."
+ }
+}
