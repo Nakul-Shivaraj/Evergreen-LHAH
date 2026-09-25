@@ -1,0 +1,195 @@
+EVERGREEN: INTEGRATION HANDOFF FOR THE AGENT LAPTOP + VERCEL DASHBOARD
+======================================================================
+
+Audience: the coding agent working in the Evergreen-LHAH repo (and the Next.js/Vercel
+dashboard). Read README.md in the repo first; this file only covers wiring the sponsor
+services. Everything below was tested live on Sept 25 unless marked TODO.
+
+SECRETS: this file contains no key values. They are in the Vercel project's env vars
+(Saahith sends them separately). Never commit a key; .env / .env.local stay git-ignored.
+
+
+1. ENVIRONMENT VARIABLES
+------------------------
+
+Add these in Vercel (Project Settings -> Environment Variables), then on the agent
+laptop run:  vercel env pull .env.local
+
+  Agent (Python, runs on the laptop):
+    NIMBLE_API_KEY          Nimble Search/Extract. Tested.
+    RAWTREE_API_KEY         RawTree key "evergreen-agent", permission read_write. Tested.
+    RAWTREE_DATABASE=evergreen
+    RAWTREE_ORG=tokensand
+    RAWTREE=1               memory.py only logs to RawTree when this is set
+    LIQUID_URL              OPTIONAL. Leave unset (no Liquid model is hosted; see 4).
+
+  Dashboard (Next.js, runs on Vercel):
+    RAWTREE_DASHBOARD_KEY   RawTree key "evergreen-dashboard", permission read_only. Tested:
+                            queries work, inserts return 403.
+    RAWTREE_DATABASE=evergreen
+
+  TODO, not provided yet (patch model, Person 1):
+    AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID
+    (or switch patcher.py to the Anthropic SDK with ANTHROPIC_API_KEY)
+
+Python code loads env with python-dotenv. Load BOTH files so `vercel env pull` works:
+    from dotenv import load_dotenv
+    load_dotenv(".env.local"); load_dotenv(".env")
+
+Agent Python must be 3.11 (pandas 1.5.3 has no wheels for newer Python):
+    uv venv -p 3.11 .venv && uv pip install -p .venv requests python-dotenv pytest rich
+
+
+2. RAWTREE (Tinybird sponsor track)
+-----------------------------------
+
+Setup that already exists:
+  organization  tokensand
+  cluster       long-horizon-agents-hack   (shared by every team at the event)
+  database      evergreen                  (ours; created today, empty)
+
+Facts from RawTree's docs:
+  - Tables are created automatically on the first insert. No schema step.
+  - Insert:  POST https://api.rawtree.com/v1/tables/<table>?database=evergreen
+             Authorization: Bearer $RAWTREE_API_KEY
+             body = one JSON object OR a JSON array of objects (batch)
+             response {"inserted": N}
+  - Query:   POST https://api.rawtree.com/v1/query?database=evergreen
+             body {"sql": "SELECT ..."}   read-only SQL only (ClickHouse dialect)
+             response {"meta": [...], "data": [{...}, ...], "rows": N, "statistics": {...}}
+  - Nested JSON fields are queried with dot notation (a.b). The original row is in the
+    virtual column __raw_data.
+  - API keys cover the WHOLE cluster, not just our database. Nothing is private from other
+    teams. Never log secrets, file contents with keys, or personal data.
+  - Store timestamps as epoch seconds (numbers) to avoid type-inference surprises.
+
+REQUIRED CHANGE to memory.py (Person 3's file):
+  It currently shells out to the `rtree` CLI and SILENTLY skips RawTree when the CLI is not
+  installed. Replace the two subprocess calls with plain HTTP so no CLI install is needed:
+
+    import requests
+    API = "https://api.rawtree.com/v1"
+    DB = os.environ.get("RAWTREE_DATABASE", "evergreen")
+    HEADERS = {"Authorization": f"Bearer {os.environ.get('RAWTREE_API_KEY', '')}"}
+    USE_RAWTREE = os.environ.get("RAWTREE") == "1" and bool(os.environ.get("RAWTREE_API_KEY"))
+
+    # in flush(), per table:
+    requests.post(f"{API}/tables/{t}", params={"database": DB}, json=rows,
+                  headers=HEADERS, timeout=10)
+
+    # query():
+    r = requests.post(f"{API}/query", params={"database": DB}, json={"sql": sql},
+                      headers=HEADERS, timeout=20)
+    return r.json().get("data", [])
+
+  Keep everything else (the local JSONL copy, the 2-second background flush). Wrap the
+  POST in try/except requests.RequestException so a RawTree hiccup never breaks a run,
+  and print one warning if an insert fails (so failures are not silent).
+
+Tables (from README section 11; keep these names so the dashboard queries match):
+  attempts      one row per patch attempt
+  rule_events   proposed / verified / applied / succeeded / failed / demoted / retired
+  test_runs     one row per full pytest run: passing, failing, total
+  evidence      one row per Nimble lookup (see 3)
+  Every row carries run_id and at (epoch seconds).
+
+Verify an insert landed:
+  POST /v1/query  {"sql": "SELECT count() FROM attempts"}
+
+
+3. NIMBLE (Person 2, done: branch p2-liquid-nimble)
+---------------------------------------------------
+
+Files: evergreen/evidence.py, evergreen/changelog.py (and liquid.py, see 4).
+
+  get_evidence(failure: Failure, library="pandas", version="2") -> Evidence | None
+    One Nimble Search call restricted to pandas.pydata.org with full page content,
+    returns the URL plus ~500 chars centered on the deprecation sentence, e.g.
+    "Deprecated since version 1.4.0: Use concat() instead."
+    Live latency 6-22 s. Results are cached per signature in .evidence_cache.json, so
+    repeats take 0 s. PRE-WARM before the demo: run the demo repo once, or call
+    get_evidence for each planted error.
+    Endpoint used: POST https://sdk.nimbleway.com/v2/search
+      {"query", "max_results": 3, "search_depth": "lite", "full_content": true,
+       "include_domains": ["pandas.pydata.org"]}
+    Returns None on network errors (the loop should treat that as "no evidence").
+
+  fetch_changelog(library, version) -> str     (stretch: expiry)
+    Nimble Extract of https://pandas.pydata.org/docs/whatsnew/v{version}.html as markdown.
+    ~40 s the first time, then cached in .changelog_cache/. Fetch once before the demo.
+  affected_rules(changelog_text, rules) -> list[Rule]
+    Rules whose API names appear in the release notes; these get re-tested.
+
+  The loop should log each lookup to RawTree:
+    memory.log("evidence", {"run_id": ..., "signature": f.signature, "url": ev.url,
+                            "latency_s": ev.latency_s, "cached": ev.latency_s == 0})
+
+  Budget: everyone shares one Nimble free trial (5,000 pages). A lookup costs about 3.
+  Never search in a loop without the cache.
+
+Self-checks:  python -m evergreen.evidence   /   python -m evergreen.changelog
+
+
+4. LIQUID
+---------
+
+  match_rule(failure, rules) -> Rule | None      (evergreen/liquid.py)
+    Deterministic: exact signature first, then same exception type AND same API name
+    (Series.append matches the DataFrame.append rule). Demoted/retired rules never fire.
+    Self-check: python -m evergreen.liquid (7 cases, all pass).
+
+  Why deterministic: LFM2.5-1.2B was tested on the planned "pick a rule ID" prompt. It
+  answered "unknown" for everything with a raw prompt, then always "R3" with the chat
+  template, and with yes/no questions it said "yes" to non-matches. It is only safe as a
+  confirmer of candidates the code already narrowed down, which is what liquid.py does if
+  LIQUID_URL is set.
+
+  Status: no Liquid model is running anywhere (the team decided not to run llama.cpp on
+  Saahith's laptop). Liquid has no hosted API key; its docs only offer self-hosting
+  (llama.cpp/Ollama on a laptop, or Modal/Baseten/vLLM on a GPU). If nobody hosts it:
+    - leave LIQUID_URL unset; matching still works;
+    - do NOT claim Liquid as a sponsor tool in the pitch;
+    - sponsor count is still 3 (AWS Bedrock, Nimble, Tinybird/RawTree), which meets 3+.
+  If someone does host it: llama-server -m LFM2.5-1.2B-Instruct-Q4_K_M.gguf --port 8080
+  (HF repo LiquidAI/LFM2.5-1.2B-Instruct-GGUF), then set LIQUID_URL=http://<host>:8080.
+
+
+5. DASHBOARD (Next.js on Vercel)
+--------------------------------
+
+  Query RawTree ONLY from server code (route handlers or server components), never from
+  the browser, so RAWTREE_DASHBOARD_KEY is not shipped to clients:
+
+    // app/api/stats/route.ts
+    export async function GET() {
+      const r = await fetch(
+        `https://api.rawtree.com/v1/query?database=${process.env.RAWTREE_DATABASE}`,
+        { method: "POST", cache: "no-store",
+          headers: { Authorization: `Bearer ${process.env.RAWTREE_DASHBOARD_KEY}`,
+                     "Content-Type": "application/json" },
+          body: JSON.stringify({ sql: "SELECT at, passing, total FROM test_runs WHERE run_id = 'r1' ORDER BY at" }) });
+      return Response.json((await r.json()).data ?? []);
+    }
+
+  Poll every 1-2 s for the live counters. Chart queries (README 11 and 15):
+    staircase      SELECT at, passing FROM test_runs WHERE run_id = {r} ORDER BY at
+    learning curve SELECT file, count() AS attempts, sum(used_web) AS web_lookups,
+                          sum(output_tokens) AS tokens, min(at) AS started
+                   FROM attempts WHERE run_id = {r} GROUP BY file ORDER BY started
+    flat prompt    SELECT attempt, prompt_tokens, naive_prompt_tokens
+                   FROM attempts WHERE run_id = {r} ORDER BY attempt
+    web lookups    SELECT count() AS lookups, countIf(cached) AS cached FROM evidence WHERE run_id = {r}
+  Parameterize run_id server-side; validate it against [A-Za-z0-9_-] before putting it
+  in SQL (the query API takes raw SQL).
+
+  A table only exists after its first insert, so the dashboard must handle a
+  "table does not exist" error as "no data yet" until the agent has run once.
+
+
+6. OPEN ITEMS (owner)
+---------------------
+  [ ] Patch-model credentials: AWS for Bedrock, or switch to Anthropic (Person 1 / team)
+  [ ] memory.py: rtree CLI -> HTTP (Person 3), see section 2
+  [ ] Add the env vars above to Vercel; then `vercel env pull .env.local` on the agent laptop
+  [ ] Pre-warm the Nimble evidence cache and the pandas 3.0 changelog before the demo
+  [ ] Ask the Tinybird rep whether RawTree counts for the Tinybird prize (README 24.2)
