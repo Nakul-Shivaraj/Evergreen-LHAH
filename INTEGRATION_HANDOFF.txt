@@ -21,16 +21,15 @@ laptop run:  vercel env pull .env.local
     RAWTREE_DATABASE=evergreen
     RAWTREE_ORG=tokensand
     RAWTREE=1               memory.py only logs to RawTree when this is set
-    LIQUID_URL              OPTIONAL. Leave unset (no Liquid model is hosted; see 4).
+    LIQUID_URL=http://localhost:8080   the llama-server on the agent laptop (see 4)
 
   Dashboard (Next.js, runs on Vercel):
     RAWTREE_DASHBOARD_KEY   RawTree key "evergreen-dashboard", permission read_only. Tested:
                             queries work, inserts return 403.
     RAWTREE_DATABASE=evergreen
 
-  TODO, not provided yet (patch model, Person 1):
-    AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID
-    (or switch patcher.py to the Anthropic SDK with ANTHROPIC_API_KEY)
+  No cloud model keys: every model call goes to Liquid on the laptop. There is no AWS,
+  Bedrock, Claude, or OpenAI anywhere in the system.
 
 Python code loads env with python-dotenv. Load BOTH files so `vercel env pull` works:
     from dotenv import load_dotenv
@@ -144,14 +143,18 @@ Self-checks:  python -m evergreen.evidence   /   python -m evergreen.changelog
   confirmer of candidates the code already narrowed down, which is what liquid.py does if
   LIQUID_URL is set.
 
-  Status: no Liquid model is running anywhere (the team decided not to run llama.cpp on
-  Saahith's laptop). Liquid has no hosted API key; its docs only offer self-hosting
-  (llama.cpp/Ollama on a laptop, or Modal/Baseten/vLLM on a GPU). If nobody hosts it:
-    - leave LIQUID_URL unset; matching still works;
-    - do NOT claim Liquid as a sponsor tool in the pitch;
-    - sponsor count is still 3 (AWS Bedrock, Nimble, Tinybird/RawTree), which meets 3+.
-  If someone does host it: llama-server -m LFM2.5-1.2B-Instruct-Q4_K_M.gguf --port 8080
-  (HF repo LiquidAI/LFM2.5-1.2B-Instruct-GGUF), then set LIQUID_URL=http://<host>:8080.
+  Liquid is the ONLY model in the system: it writes the patches (the 8B model) and
+  confirms rule matches. It runs in llama-server on the agent laptop; Liquid has no hosted
+  API, so there is no key. Set LIQUID_URL=http://localhost:8080.
+    - Patching: LFM2.5-8B-A1B (HF repo LiquidAI/LFM2.5-8B-A1B-GGUF): mixture-of-experts,
+      ~1B active parameters, so it is as fast as the 1.2B on CPU but much stronger.
+      Tested: fixed clean.py on the first try with no cloud AI.
+    - Keep patches to the offending line (the traceback gives it); a small model mangles
+      whole-file rewrites. Always set a new rule's `signature` from the failure itself,
+      never from model output: agents_md.py prints it as the rule heading and match_rule
+      looks rules up by it.
+  Sponsors: Liquid, Nimble, Tinybird/RawTree = 3 (meets the 3+ rule).
+  Pitch line: "Everything runs on the laptop. No cloud model at all."
 
 
 5. DASHBOARD (Next.js on Vercel)
@@ -188,7 +191,8 @@ Self-checks:  python -m evergreen.evidence   /   python -m evergreen.changelog
 
 6. OPEN ITEMS (owner)
 ---------------------
-  [ ] Patch-model credentials: AWS for Bedrock, or switch to Anthropic (Person 1 / team)
+  [ ] Push the 7 local commits (patcher, guards, runner, matcher, git helper, counters)
+      and merge all branches into main
   [ ] memory.py: rtree CLI -> HTTP (Person 3), see section 2
   [ ] Add the env vars above to Vercel; then `vercel env pull .env.local` on the agent laptop
   [ ] Pre-warm the Nimble evidence cache and the pandas 3.0 changelog before the demo
