@@ -10,6 +10,33 @@ function Line({ points, max, color, height = 140 }) {
   return <path d={d} fill="none" stroke={color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />;
 }
 
+function Steps({ points, max, color, height = 140 }) {
+  // points: [{ x: time, y: passing }]. A ratchet only moves up in steps, so draw steps.
+  if (points.length < 2) return null;
+  const w = 600, x0 = points[0].x, span = Math.max(1, points[points.length - 1].x - x0);
+  const xs = (x) => ((x - x0) / span) * w;
+  const ys = (v) => height - (max ? (v / max) * (height - 8) : 0) - 4;
+  let d = `M0,${ys(points[0].y).toFixed(1)}`;
+  for (const p of points.slice(1)) d += ` H${xs(p.x).toFixed(1)} V${ys(p.y).toFixed(1)}`;
+  return <path d={d} fill="none" stroke={color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />;
+}
+
+function StepChart({ points, total, label }) {
+  const height = 140, max = Math.max(1, total || 0, ...points.map((p) => p.y));
+  return points.length < 2 ? <div className="empty">Waiting for data…</div> : (
+    <div>
+      <svg viewBox={`0 0 600 ${height}`} width="100%" height={height} preserveAspectRatio="none" role="img" aria-label={label}>
+        <Steps points={points} max={max} color="var(--green)" height={height} />
+      </svg>
+      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+        <span style={{ color: "var(--green)" }}>■</span> passing: {points[0].y} → {points[points.length - 1].y} of {total}
+      </div>
+    </div>
+  );
+}
+
+const host = (u) => { try { return new URL(u).hostname; } catch { return u; } };
+
 function Chart({ series, height = 140, label }) {
   const max = Math.max(1, ...series.flatMap((s) => s.points));
   const has = series.some((s) => s.points.length >= 2);
@@ -89,9 +116,9 @@ export default function Page() {
 
           <div className="grid tiles">
             <Tile k="Rules learned" v={c.rulesLearned} cls="good" />
-            <Tile k="Rules applied" v={c.rulesApplied} />
-            <Tile k="Instant fixes (0 tokens)" v={c.instantFixes} cls="good" />
-            <Tile k="Web lookups (Nimble)" v={c.webLookups} />
+            <Tile k="Rules reused (worked)" v={c.rulesApplied} cls={c.rulesApplied ? "good" : ""} />
+            <Tile k="Fixed straight from a rule" v={c.instantFixes} cls="good" />
+            <Tile k={`Web lookups (Nimble)${c.cachedLookups ? `, ${c.cachedLookups} cached` : ""}`} v={c.webLookups} />
             <Tile k="Rollbacks" v={c.rollbacks} cls={c.rollbacks ? "warn" : ""} />
             <Tile k="Rejected by guard" v={c.guardRejections} cls={c.guardRejections ? "warn" : ""} />
             <Tile k="Human interventions" v={0} cls="good" />
@@ -101,7 +128,7 @@ export default function Page() {
           <div className="grid two" style={{ marginBottom: 12 }}>
             <div className="card">
               <h2>Staircase: tests passing over time</h2>
-              <Chart label="Tests passing over time" series={[{ name: "passing", color: "var(--green)", points: data.staircase.map((s) => s.passing) }]} />
+              <StepChart label="Tests passing over time" total={c.total} points={data.staircase.map((s) => ({ x: s.at, y: s.passing }))} />
             </div>
             <div className="card">
               <h2>Prompt size per attempt</h2>
@@ -114,7 +141,7 @@ export default function Page() {
 
           <div className="grid two">
             <div className="card">
-              <h2>Rulebook (written to AGENTS.md)</h2>
+              <h2>Rulebook (verified rules go to AGENTS.md)</h2>
               {data.rules.length === 0 ? <div className="empty">No rules yet</div> : (
                 <table>
                   <thead><tr><th>Rule</th><th>Fix</th><th>Status</th></tr></thead>
@@ -127,6 +154,7 @@ export default function Page() {
                         <td className={r.status === "retired" || r.status === "demoted" ? "bad" : "good"}>
                           {r.status}{r.confidence != null ? ` · ${Number(r.confidence).toFixed(2)}` : ""}
                           {r.applied ? ` · used ${r.applied}×` : ""}
+                          {!r.inAgentsMd ? " · not in AGENTS.md" : ""}
                         </td>
                       </tr>
                     ))}
@@ -135,7 +163,7 @@ export default function Page() {
               )}
             </div>
             <div className="card">
-              <h2>Latest attempts</h2>
+              <h2>Latest attempts{data.attemptsTotal > data.feed.length ? ` (last ${data.feed.length} of ${data.attemptsTotal})` : ""}</h2>
               {data.feed.length === 0 ? <div className="empty">No attempts yet</div> : (
                 <table>
                   <tbody>
@@ -159,7 +187,7 @@ export default function Page() {
                   <table><tbody>
                     {data.evidence.map((e, i) => (
                       <tr key={i}><td><code>{e.signature}</code></td>
-                        <td><a href={e.url} target="_blank" rel="noreferrer">{new URL(e.url).hostname}</a>{e.cached ? " · cached" : ""}</td></tr>
+                        <td>{e.url ? <a href={e.url} target="_blank" rel="noreferrer">{host(e.url)}</a> : "no result"}{e.cached ? " · cached" : ""}</td></tr>
                     ))}
                   </tbody></table>
                 </>

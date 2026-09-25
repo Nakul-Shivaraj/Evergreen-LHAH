@@ -20,17 +20,26 @@ export async function GET(request) {
     rows("rule_events", runId),
     rows("evidence", runId),
   ]);
+  const bySeq = (a, b) => num(a.at) - num(b.at) || num(a.seq) - num(b.seq);
+  tests.sort(bySeq); ruleEvents.sort(bySeq); evidence.sort(bySeq);
+  attempts.sort((a, b) => num(a.attempt) - num(b.attempt) || bySeq(a, b));
 
   // Current state of each rule = its latest event.
   const rules = {};
+  const STATUSES = ["verified", "trusted", "demoted", "retired"];
   for (const e of ruleEvents) {
-    const r = (rules[e.rule_id] ||= { rule_id: e.rule_id, applied: 0, failed: 0 });
-    if (e.event === "applied") r.applied++;
-    if (typeof e.applied === "number") r.applied = Math.max(r.applied, e.applied);   // agent's running count
+    const r = (rules[e.rule_id] ||= { rule_id: e.rule_id, reused: 0, failed: 0, appliedField: 0, status: "verified" });
+    if (e.event === "succeeded") r.reused++;
     if (e.event === "failed") r.failed++;
+    if (typeof e.applied === "number") r.appliedField = Math.max(r.appliedField, e.applied);  // agent's running count
     for (const k of ["signature", "pattern", "replacement", "source_url", "confidence", "proven_on"])
       if (e[k] !== undefined && e[k] !== null) r[k] = e[k];
-    r.status = e.event;
+    if (STATUSES.includes(e.status)) r.status = e.status;          // the rule's own status field
+    else if (STATUSES.includes(e.event)) r.status = e.event;       // or a status-changing event
+  }
+  for (const r of Object.values(rules)) {
+    r.applied = Math.max(r.appliedField, 1 + r.reused + r.failed);   // birth + every reuse
+    r.inAgentsMd = r.status === "verified" || r.status === "trusted";
   }
 
   const last = tests[tests.length - 1] || {};
@@ -39,9 +48,9 @@ export async function GET(request) {
     passing: num(last.passing),
     total: num(last.total) || num(last.passing) + num(last.failing),
     rulesLearned: Object.values(rules).filter((r) => r.status !== "proposed").length,
-    rulesApplied: ruleEvents.filter((e) => e.event === "applied").length,
-    instantFixes: accepted.filter((a) => truthy(a.instant) || num(a.output_tokens) === 0).length,
-    webLookups: evidence.filter((e) => !truthy(e.cached)).length,
+    rulesApplied: ruleEvents.filter((e) => e.event === "succeeded").length,   // successful reuses
+    instantFixes: accepted.filter((a) => a.fixer === "liquid_quick" || truthy(a.instant) || num(a.output_tokens) === 0).length,
+    webLookups: evidence.length,                                          // every lookup, cached or live
     cachedLookups: evidence.filter((e) => truthy(e.cached)).length,
     attempts: attempts.length,
     rollbacks: attempts.filter((a) => truthy(a.rolled_back)).length,
@@ -54,6 +63,7 @@ export async function GET(request) {
     runId,
     counters,
     staircase: tests.map((t) => ({ at: num(t.at), passing: num(t.passing), total: num(t.total) })),
+    attemptsTotal: attempts.length,
     prompt: attempts.map((a, i) => ({
       attempt: num(a.attempt) || i + 1,
       prompt: num(a.prompt_tokens),
@@ -66,9 +76,9 @@ export async function GET(request) {
       rolledBack: truthy(a.rolled_back),
       guard: truthy(a.rejected_by_guard),
       web: truthy(a.used_web),
-      tokens: num(a.output_tokens),
+      tokens: num(a.output_tokens) + num(a.prompt_tokens),   // same basis as the Liquid tokens tile
       rules: a.rule_ids || [],
     })),
-    evidence: evidence.slice(-8).reverse().map((e) => ({ signature: e.signature, url: e.url, cached: truthy(e.cached) })),
+    evidence: evidence.slice(-8).reverse().map((e) => ({ signature: e.signature, url: e.url || null, cached: truthy(e.cached) })),
   });
 }
